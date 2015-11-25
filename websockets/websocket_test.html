@@ -1,0 +1,20 @@
+<html>
+<body>
+Address: <input id="address" type="text"/> <button id="connect">Connect</button>
+<input id="message" type="text"/><button id="send">Send</button>
+<div id="messages"></div>
+<script src="https://code.jquery.com/jquery-2.1.4.min.js"></script>
+<script>
+	$(function() {
+		$("#connect").click(function() {
+			ws = new WebSocket($("#address").val())
+			$("#send").click(function() {
+				ws.send($("#message").val())
+			})
+			ws.onmessage = function(evt) {
+				$("#messages").append(evt.data)
+			}
+		})
+	})
+</script>
+</body>

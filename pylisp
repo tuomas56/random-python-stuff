@@ -1,0 +1,328 @@
+#!/usr/bin/env python3
+
+from builtins import *
+import argparse
+import sys
+import platform
+import functools
+import itertools
+import operator
+
+VERSION = "0.1.732"
+
+class AttrDict(dict):
+    def __init__(self, *args, **kwargs):
+        super(AttrDict, self).__init__(*args, **kwargs)
+        self.__dict__ = self
+
+def tokenize(source):
+    return list(filter(lambda x: x != '',source.replace("("," ( ").replace(")"," ) ").replace("\n"," ").replace('"',' " ').replace("'","' ").split(" ")))
+
+def atom(x):
+    try: return int(x)
+    except:
+        try: return float(x)
+        except: return x
+
+class literal(str):
+    pass
+
+def parse(source):
+    ast = []
+    while len(source):
+        if source[0] == "(":
+            depth = 1
+            i = 0
+            try:
+                while depth > 0:
+                    i += 1
+                    if source[i] == ")":
+                        depth -= 1
+                    elif source[i] == "(":
+                        depth += 1
+            except:
+                raise Exception("Unmatched Opening Parentheses")
+            ast.append(parse(source[1:i]))
+            source = source[i+1:]
+        elif source[0] == "'":
+            source.insert(0,"(")
+            source[1] = "quote"
+            if source[2] == "(":
+                depth = 1
+                i = 3
+                try:
+                    while depth > 0:
+                        i += 1
+                        if source[i] == ")":
+                            depth -= 1
+                        elif source[i] == "(":
+                            depth += 1
+                except:
+                    raise Exception("Unmatched Opening Parentheses")
+                source.insert(i+1,")")
+            else:
+                source.insert(3,")")
+        elif source[0] == '"':
+            l = []
+            i = 1
+            while source[i] != '"':
+                if source[i] in "('" and i - 1 < len(source) and source[i+1] != '"':
+                    k = []
+                    k.append(source[i])
+                    while source[i] in "('":
+                        i += 1
+                        k.append(source[i])
+                    if len(l):
+                        l[-1] += ''.join(k)
+                    else:
+                        l.append(''.join(k))
+                elif source[i] == ")" and len(l):
+                    l[-1] += ")"
+                else:
+                    l.append(source[i])
+                i += 1
+            ast.append(literal(" ".join(l)))
+            source = source[i+1:]
+        elif source[0] == ")":
+            raise Exception("Unmatched Closing Parentheses")
+        else:
+            ast.append(atom(source[0]))
+            source = source[1:]
+    return ast
+
+def evall(ast,env):
+    if isinstance(ast,list):
+        if ast[0] == 'quote':
+            return (ast[1:],env) if len(ast[1:]) > 1 else (ast[1],env)
+        elif ast[0] == 'define':
+            if ast[1] not in list(env.keys()):
+                value,env = evall(ast[2],env)
+                env[ast[1]] = value
+                return value,env
+            else:
+                raise NameError(ast[1] + " is already defined!")
+        elif ast[0] == 'set!':
+            if ast[1] in list(env.keys()):
+                value,env = evall(ast[2],env)
+                env[ast[1]] = value
+                return value,env
+            else:
+                raise NameError(ast[1] + " has not been defined!")
+        elif ast[0] == 'lambda':
+            def wrapper(*args,env):
+                parent_env = {}
+                parent_env.update(env)
+                if len(args) != len(ast[1]):
+                    raise Exception("Lambda needs " + str(len(ast[1])) + " arguments and got " + str(len(args)))
+                else:
+                    for name,value in zip(ast[1],args):
+                        env[name] = value
+                    for statement in ast[2:]:
+                        result,env = evall(statement,env)
+                    return result,parent_env
+            return wrapper,env
+        elif ast[0] == 'cond':
+            for pair in ast[1:]:
+                if pair[0] == 'else':
+                    return evall(pair[1],env)
+                result,env = evall(pair[0],env)
+                if result:
+                    return evall(pair[1],env)
+        else:
+            args = []
+            for arg in ast[1:]:
+                arg, env = evall(arg,env)
+                args.append(arg)
+            if isinstance(ast[0],str):
+                result,env = env[ast[0]](*args,env=env)
+            else:
+                func,env = evall(ast[0],env)
+                result,env = func(*args,env=env)
+            return result,env
+    else:
+        if isinstance(ast,float) or isinstance(ast,int) or isinstance(ast,literal):
+            return ast,env
+        else:
+            return env[ast],env
+
+def _assert(x,y="",env={}):
+    if not x:
+        raise AssertionError(y)
+    return x,env
+
+def _get(y,env, base=None):
+
+    if base is None:
+        base = globals()
+
+    if "." in y:
+        first, *next = y.split(".")
+        base, env = _get(first, env, base=base)
+        while next:
+            first, *next = next
+            base, env = _get(first, env, base=base)
+        return base, env
+
+    if isinstance(base, dict):
+        if callable(base[y]):
+            return _wrap(base[y]), env
+        else:
+            return base[y], env
+    else:
+        if callable(getattr(base, y)):
+            return _wrap(getattr(base, y)), env
+        else:
+            return getattr(base, y),env
+
+def _set(x,y,env, base=None):
+    if base is None:
+        base = globals()
+
+    try:
+        *x, attr = x.split(".")
+        x = '.'.join(x)
+    except:
+        attr = x
+        x = ""
+
+    if "." in x:
+        first, *next = x.split(".")
+        base, env = _get(first, env, base=base)
+        while next:
+            first, *next = next
+            base, env = _get(first, env, base=base)
+    elif x != "":
+        if isinstance(base, dict):
+            base = base[x]
+        else:
+            base = getattr(base, x)
+
+    if isinstance(base, dict):
+        base[attr] = y
+    else:
+        setattr(base, attr, y)
+    return y, env
+
+def _pyimport(x,env):
+    globals()[x] =  __import__(x)
+    return globals()[x], env
+
+def _import(x,env):
+    return None,env
+
+def std_env(env):
+    env.update({
+        "print": lambda x,v=[],env={}: (print(*x),env) if isinstance(x,list) else (print(str(x) % v),env),
+        "input": lambda x='',env={}: (input(x+" "),env),
+        "concat": lambda *x,env: (''.join(x),env),
+        "join": lambda x,y,env: (y.join(x),env),
+        "split": lambda x,y,env: (x.split(y),env),
+        "sp": " ",
+        "nl": "\n",
+        "dq": '"',
+        "sq": "'",
+	    "el": [],
+	    "collect": lambda *x, env: (x, env),
+        "+": _wrap(operator.add),
+        "-": _wrap(operator.sub),
+        "*": _wrap(operator.mul),
+        "/": _wrap(operator.truediv),
+        "**": _wrap(operator.pow),
+        "%": _wrap(operator.mod),
+        "//": _wrap(operator.floordiv),
+        "abs": _wrap(abs),
+        "map": _wrap(map),
+        "sum": _wrap(sum),
+        "filter": _wrap(filter),
+        "reduce": _wrap(functools.reduce),
+        "accumulate": _wrap(itertools.accumulate),
+        "eq?": lambda x,y,env: (x==y,env),
+        "lt?": lambda x,y,env: (x < y,env),
+        "gt?": lambda x,y,env: (x > y,env),
+        "le?": lambda x,y,env: (x <= y,env),
+        "ge?": lambda x,y,env: (x >= y,env),
+        "cons": lambda x,y,env: ([x,y],env),
+        "append": lambda ls,x,env: (ls + [x],env),
+        "car": lambda x,env: (x[0],env),
+        "cdr": lambda x,env: (x[1],env),
+        "atom?": lambda x,env: (not isinstance(x,list),env),
+        "None": None,
+        "#f": False,
+        "#t": True,
+        "empty?": lambda x,env: (len(x) == 0,env),
+        "len": lambda x,env: (len(x),env),
+        "assert": _assert,
+        "int?": lambda x,env: (isinstance(x,int),env),
+        "int": lambda x,env: (int(x),env),
+        "float?": lambda x,env: (isinstance(x,float),env),
+        "float": lambda x,env: (float(x),env),
+        "str": lambda x,env: (str(x),env),
+        "str?": lambda x,env: (isinstance(x,str),env),
+        "eval": evaluate,
+        "pyimport": _pyimport,
+        "import": _import,
+        "pyeval": _wrap(eval),
+        "pyget": _get,
+        "pyset": _set,
+        "quit": _wrap(sys.exit)
+    })
+    return env
+
+def evaluate(code,env={}):
+    code = parse(tokenize(code))
+    env = std_env(env)
+    results = []
+    for statement in code:
+        result,env = evall(statement,env)
+        results.append(result)
+    return results,env
+
+def _wrap(func):
+    return lambda *x,env: (func(*x),env)
+
+def repl():
+    print("Pylisp interpreter version: "+VERSION)
+    print("Running on platform:",platform.system(),platform.release(),platform.machine(),platform.architecture()[0])
+    print("Underlying Python interpreter: "+platform.python_implementation()+" "+platform.python_version())
+    print("\nEnter your code - line breaks allowed,\nand then enter an empty line to execute the code.")
+    print("Use (quit) to exit.\n")
+    env = {}
+    results = []
+    while True:
+        code = ""
+        line = input(">>> ")
+        while True:
+            if line == "":
+                break
+            else:
+                code += line
+            line = input("... ")
+        results,env = evaluate(code,env)
+        print('\n'.join(map(str,results)))
+
+def load(file):
+    with open(file,"r") as f:
+        evaluate(f.read())
+
+def stdin():
+    evaluate(sys.stdin.read())
+
+def main():
+    parser = argparse.ArgumentParser(description="A LISP interpreter written in python. Version: "+VERSION)
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("-repl","-r",help="Start the interactive shell.",action="store_true")
+    modes.add_argument("-load","-l",help="Load some code from file and interpret it.",metavar="FILE")
+    modes.add_argument("-stdin","-s",help="Accept input from stdin.",action="store_true")
+    args = parser.parse_args()
+    if args.repl:
+        repl()
+    elif args.load:
+        load(args.load)
+    elif args.stdin:
+        stdin()
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

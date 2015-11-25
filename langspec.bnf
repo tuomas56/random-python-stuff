@@ -1,0 +1,15 @@
+If = "if" Expr Block ("elif" Expr Block)* ("else" Expr Block)?
+While = "while" Expr Block
+For = "for" Identifier "of" Expr Block
+Block = Expr | "{" Expr* "}"
+Identifier = [a-zA-Z_][a-zA-Z0-9_]*
+IdentifierList = (Identifier ",")* Identifier
+Func = "func" Identifier? ("(" IdentifierList ")")? Block
+StringLiteral = ('"' | "'") [^\g<1>] \g<1>
+NumLiteral = \d* "."? \d*
+ListLiteral = "[" ExprList "]"
+Literal = StringLiteral | NumLiteral | ListLiteral
+ExprList = (Expr ",")* Expr
+FuncCall = Expr "(" ArgList? ")"
+BinOp = Expr Op Expr | "(" Expr ")"
+Expr = Identifier | BinOp | FuncCall | Literal | Func | If | While | For

@@ -1,0 +1,2 @@
+sierpinski = lambda n: sierpinski(n-1) + '\n' + '\n'.join(map(lambda x: x[0] + (2**n - len(x[0]))*" " + x[1],zip(sierpinski(n-1).split('\n'),sierpinski(n-1).split('\n')))) if n != 0 else 'L'
+print(sierpinski(3))

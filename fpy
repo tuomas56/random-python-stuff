@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+
+import traceback
+import sys
+import os.path
+
+def main():
+	command_history = []
+	cur_buffer = None
+	pause_buffer = None
+	while True:
+		command = input(">>> ")
+		if command.startswith(":"):
+			command, *arguments = command[1:].split(" ") + [None]
+			command = command.strip()
+			if command == "start":
+				print("=> New buffer started.")
+				cur_buffer = []
+			elif command == "pause":
+				if pause_buffer is not None:
+					print("=> Buffer unpaused.")
+					cur_buffer, pause_buffer = pause_buffer, cur_buffer
+				else:
+					print("=> Buffer paused.")
+					cur_buffer, pause_buffer = pause_buffer, cur_buffer
+			elif command == "stop":
+				cur_buffer = None
+				print("=> Buffer discarded.")
+			elif command == "del":
+				del cur_buffer[-1]
+				print("=> Line deleted.")
+			elif command == "save":
+				if not arguments[0]:
+					continue
+				with open(arguments[0].strip(), "w") as f:
+					f.write(''.join(cur_buffer))
+				print("=> Saved as",arguments[0])
+			elif command == "quit":
+				sys.exit()
+			else:
+				print("=> Command not recognized.")
+			continue
+		while len(command) and command[-1] != "\n":
+			command += "\n" + input("... ")
+		if len(command_history):
+			command = command.replace('!!',command_history[-1])
+		command = command.replace("\\!\\!","!!")			
+
+		command_history.append(command)
+		if cur_buffer is not None:
+			cur_buffer.append(command)
+		try:
+			try:
+				val = eval(command)
+				if val is not None:
+					print(repr(val))
+			except:
+				exec(command)
+		except Exception as e:
+			traceback.print_exception(type(e),e,None)
+
+main()
+		

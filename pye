@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+
+import sys
+import os
+import os.path
+from blessed import Terminal
+
+class Buffer:
+	def __init__(self, filename):
+		if filename is not None:
+			with open(filename, "r") as f:
+				self.buffer = f.read()
+		else:
+			self.buffer = ""
+		self.cursor = 0
+
+	def save(self, filename):
+		with open(filename, "w") as f:
+			f.write(self.buffer())
+
+	def write(self, text):
+		if self.cursor + len(text) > len(self.buffer):
+			self.buffer += " "*(self.cursor + len(text) - len(self.buffer))
+		self.buffer[cursor:cursor + len(text) - 1] = text
+
+	def read(self, num=None):
+		if num is not None and self.cursor + num < len(self.buffer):
+			return self.buffer[self.cursor:self.cursor+num]
+		else:
+			return self.buffer[self.cursor:]
+
+	def move(self, num):
+		if self.cursor + 1 + num  < len(self.buffer):
+			self.cursor += num
+		else:
+			self.curor = len(self.buffer) - 1
+
+	def find_prev(self, elem):
+		return self.buffer.find(elem, 0, self.cursor)
+
+	def find_next(self, elem):
+		return self.buffer.find(elem, self.cursor)
+
+	def up(self, num=1):
+		for _ in range(num):
+			line_prev = self.find_prev("\n")
+			if line_prev > 0:
+				offset = self.cursor - line_prev
+				self.move(-offset)
+				line_prev = self.find_prev("\n")
+				if line_prev > 0:
+					if self.cursor - line_prev <= offset:
+						self.move(line_prev - self.cursor + offset)
+				else:
+					self.move(offset - self.cursor)
+
+	def down(self, num=1):
+		for _ in range(num):
+			line_next = self.find_next("\n")
+			if line_next > 0:
+				offset = line_next - self.cursor
+				self.move(offset)
+				line_next = self.find_next("\n")
+				if line_next > 0:
+					line_next -= self.cursor
+					if line_next <= offset:
+						self.move(offset)
+					else:
+						self.move(line_next)
+				else:
+					self.move(offset)
+
+class Editor:
+	def __init__(self, buffer):
+		self.buffer = buffer
+
+	def edit(self, term):
+		with term.fullscreen():
+			print(self.buffer.read())
+			print(self.buffer.cursor)
+			self.buffer.down()
+			print(self.buffer.cursor)
+			print(self.buffer.read())
+			input()
+
+def check_file(filename):
+	if os.path.isabs(filename):
+		return os.path.isfile(filename)
+	else:
+		filename = os.path.join(os.getcwd(), filename)
+		filename = os.path.expanduser(filename)
+		return os.path.isfile(filename)
+
+def main():
+	try:
+		name, filename  = sys.argv
+	except:
+		name, filename  = sys.argv[0], None
+
+	term = Terminal()
+
+	if filename and not check_file(filename):
+		err_str = "{}: ERROR: {} does not exist".format(name, filename)
+		print(term.bold_red(err_str))
+		return
+
+	editor = Editor(Buffer(filename))
+	editor.edit(term)
+
+if __name__ == "__main__":
+	main()

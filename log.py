@@ -1,0 +1,1 @@
+e,ln,log = lambda n=1000: (1+(1/n))**n, lambda x,n=1000: n*(x ** (1/n) - 1), lambda b,x,n=1000: ln(x,n)/ln(b,n)

@@ -1,0 +1,279 @@
+#! /usr/bin/env python3
+# -*- coding: utf8 -*-
+
+import argparse
+import os
+import os.path
+import yaml
+from enum import Enum
+import sys
+import io
+
+class NormalColor(Enum):
+	black = 0
+	red = 1
+	green = 2
+	yellow = 3
+	blue = 4
+	magenta = 5
+	cyan = 6
+	white = 7
+
+class BrightColor(Enum):
+	black = 0
+	red = 1
+	green = 2
+	yellow = 3
+	blue = 4
+	magenta = 5
+	cyan = 6
+	white = 7
+
+ANSI_RESET = '\033[0m'
+ANSI_BOLD = '\033[01m'
+ANSI_UNDERLINE = '\033[04m'
+ANSI_STRIKETHROUGH = '\033[09m'
+
+CONFIGFILE = "~/.pyshell/config.yaml"
+
+ENV = {}
+DEFAULTENV = {}
+
+stdout, stderr, stdwarn = [io.StringIO()]*3
+
+class InputStream:
+	def __init__(self, init=''):
+		self.buffer = init.split('\n')
+
+	def write(self, text):
+		self.buffer += text.split('\n')
+
+	def readline(self):
+		try:
+			value, *self.buffer = self.buffer
+		except:
+			return input()
+		return value
+
+	def read(self, length=0):
+		if not length:
+			value, self.buffer = self.buffer, ''
+			return value
+		else:
+			value, self.buffer = self.buffer[:length], self.buffer[length:]
+			return value
+
+def fmtcols(mylist, cols):
+    maxwidth = max(map(lambda x: len(x), mylist))
+    justifyList = list(map(lambda x: x.ljust(maxwidth), mylist))
+    lines = (' '.join(justifyList[i:i+cols]) 
+             for i in range(0,len(justifyList),cols))
+    return '\n'.join(lines)
+
+stdin = InputStream()
+
+def cd(directory):
+	try:
+		os.chdir(path(directory))
+	except FileNotFoundError:
+		err("%s does not exist!" % directory)
+	except PermissionError:
+		err("You do not have permission to access %s!" % directory)
+	except NotADirectoryError:
+		err("%s is not a directory!" % directory)
+
+def echo(text):
+	out(text)
+
+def println(text, *args):
+	out(text % args)
+
+def ls(directory=None):
+	if directory is None:
+		directory = os.getcwd()
+	try:
+		out(fmtcols(sorted(os.listdir(directory) + ['.','..']),CONFIG.get('default_columns',2)))
+	except FileNotFoundError:
+		err("%s does not exist!" % directory)
+	except PermissionError:
+		err("You do not have permission to access %s!" % directory)
+	except NotADirectoryError:
+		err("%s is not a directory!" % directory)
+		
+
+def cwd():
+	out(os.getcwd())
+
+BUILTINS = {
+	'cd': cd,
+	'echo': echo,
+	'println': println,
+	'exit': sys.exit,
+	'ls': ls,
+	'cwd': cwd
+}
+
+def out(text, **kwargs):
+	print(text, **kwargs)
+	stdout.write(text)
+
+def err(text):
+	print(text, fg=BrightColor.red, bold=True)
+	stderr.write(text)
+
+def warn(text):
+	print(text, fg=BrightColor.yellow, bold=True)
+	stdwarn.write(text)
+
+def format_ansi(text,fg=None,bg=None,bold=False,underline=False,strikethrough=False):
+	if fg is None:
+		fg = config_to_color("fg_color")
+	if bg is None:
+		bg = config_to_color("bg_color")
+	pre = color_to_ansi(fg) + color_to_ansi(fg)
+	if bold:
+		pre += ANSI_BOLD
+	if underline:
+		pre += ANSI_UNDERLINE
+	if strikethrough:
+		pre += ANSI_STRIKETHROUGH
+	return pre + text + ANSI_RESET
+
+print_def = print
+print = lambda *args, fg=None, bg=None, bold=False, underline=False, strikethrough=False, **kwargs: print_def(format_ansi(' '.join(map(str,args)),
+																		fg=fg,bg=bg,bold=bold,underline=underline,strikethrough=strikethrough),**kwargs)
+
+def color_to_ansi(color,fg=True):
+	if fg and isinstance(color,NormalColor):
+		return '\033[3%sm' % color.value
+	elif not fg and isinstance(color,NormalColor):
+		return '\033[4%sm' % color.value
+	elif fg and isinstance(color,BrightColor):
+		return '\033[9%sm' % color.value
+	elif not fg and isinstnace(color,BrightColor):
+		return '\033[10%sm' % color.value
+
+def config_to_color(name):
+	c = CONFIG[name]
+	if c['bright'] == True:
+		return BrightColor[c['color']]
+	else:
+		return NormalColor[c['color']]
+
+def color_to_config(name,color):
+	if isinstance(color,BrightColor):
+		CONFIG[name] = {'bright': True, 'color': color.value}
+	else:
+		CONFIG[name] = {'bright': False, 'color': color.value}
+
+def call(options, stdin):
+	process = subprocess.run(options,stdin=stdin)
+	return process.stdout, process.stderr
+
+def path(path_):
+	return os.path.abspath(os.path.expanduser(path_))
+
+def load_config():
+	if not os.path.isdir(os.path.dirname(path(CONFIGFILE))):
+		os.mkdir(os.path.dirname(path(CONFIGFILE)))
+	if not os.path.isfile(path(CONFIGFILE)):
+		with open(path(CONFIGFILE),"w") as f:
+			f.write(yaml.dump({}))
+	with open(path(CONFIGFILE),"r") as f:
+		global CONFIG
+		CONFIG = yaml.load(f.read())
+
+def save_config():
+	with open(os.path.abspath(CONFIGFILE),"w") as f:
+		global CONFIG
+		f.write(yaml.dump(CONFIG))
+
+def load_env():
+	try:
+		with open(path(CONFIG['env_file']),'r') as f:
+			ENV = yaml.load(f.read())
+	except IOError:
+		warn("Warning: ENV file does not exist! Writing default ENV variables to file.")
+		ENV = DEFAULTENV
+		if not os.path.isdir(os.path.dirname(path(CONFIG['env_file']))):
+			os.mkdir(os.path.dirname(path(CONFIG['env_file'])))
+		with open(path(CONFIG['env_file']),'w') as f:
+			f.write(yaml.dump(ENV))
+
+def save_env():
+	if not os.path.isdir(os.path.dirname(path(CONFIG['env_file']))):
+			os.mkdir(os.path.dirname(path(CONFIG['env_file'])))
+	with open(path(CONFIG['env_file']),'w') as f:
+		f.write(yaml.dump(ENV))
+
+def split(text, sep, with_escape=True):
+	results = []
+	curtok = ''
+	while len(text):
+		char, *text = text
+		if char == '\\' and with_escape:
+			char, *text = text
+			curtok += char
+			continue
+		elif char in ("'",'"'):
+			term = char
+			char, *text = text
+			if curtok != '':
+				results.append(curtok)
+				curtok = ''
+			while char != term:
+				curtok += char
+				char, *text = text
+			results.append(curtok)
+			curtok = ''
+			continue
+		elif char == sep:
+			if curtok != '':
+				results.append(curtok)
+				curtok = ''
+		else:
+			curtok += char
+	if curtok != '':
+		results.append(curtok)
+	return results
+
+def username():
+	return os.path.split(path("~"))[-1]
+
+def userhome():
+	return path("~")
+
+def dynprompt():
+	return "("+format_ansi(username(),fg=BrightColor.yellow)+") "+format_ansi(os.getcwd().replace(userhome(),'~'),fg=BrightColor.green)+" >>> "
+
+def sys_command(command, args):
+	raise NotImplemented
+
+def execute(command, args):
+	if command in BUILTINS:
+		BUILTINS[command](*args)
+	elif command in DEFINED_FUNCS:
+		DEFINED_FUNCS[command](*args)
+	else:
+		sys_command(command, args)
+
+def do_command():
+	command = input(CONFIG.get('prompt',False) or dynprompt())
+	command = split(command, CONFIG.get('seperator',False) or ' ', with_escape=CONFIG.get('escaping',False))
+	try:
+		command, *args = command
+		if isinstance(args, str):
+			args = (args,)
+	except: args = tuple()
+	execute(command, args)
+
+def main():
+	load_config()
+	load_env()
+	while True:
+		do_command()
+
+	return 0
+
+if __name__ == "__main__":
+	sys.exit(main())
